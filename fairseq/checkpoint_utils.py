@@ -283,6 +283,9 @@ def load_checkpoint_to_cpu(path, arg_overrides=None, load_on_all_ranks=False):
         args = state["args"]
         for arg_name, arg_val in arg_overrides.items():
             setattr(args, arg_name, arg_val)
+            #lpepino edit:
+            if hasattr(state['args'],'w2v_args'):
+                setattr(args.w2v_args,arg_name,arg_val)
 
     if "cfg" in state and state["cfg"] is not None:
 

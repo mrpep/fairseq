@@ -32,6 +32,7 @@ from fairseq.utils import buffered_arange, index_put, is_xla_tensor
 EXTRACTOR_MODE_CHOICES = ChoiceEnum(["default", "layer_norm"])
 MASKING_DISTRIBUTION_CHOICES = ChoiceEnum(["static", "uniform", "normal", "poisson"])
 
+from IPython import embed
 
 @dataclass
 class Wav2Vec2Config(FairseqDataclass):
@@ -474,7 +475,7 @@ class Wav2Vec2Model(BaseFairseqModel):
     def forward(
         self, source, padding_mask=None, mask=True, features_only=False,
         mask_indices=None, mask_channel_indices=None,
-        padding_count=None,
+        padding_count=None, transformer_features=False
     ):
 
         if self.feature_grad_mult > 0:
@@ -544,10 +545,12 @@ class Wav2Vec2Model(BaseFairseqModel):
             y = unmasked_features
             mask_indices = None
 
-        x = self.encoder(x, padding_mask=padding_mask)
+        activations = [torch.transpose(x,0,1)]
+        x, transformer_activations = self.encoder(x, padding_mask=padding_mask)
+        activations.extend(transformer_activations)
 
         if features_only:
-            return {"x": x, "padding_mask": padding_mask}
+            return {"x": x, "padding_mask": padding_mask, "activations": transformer_activations}
 
         if self.quantizer:
             q = self.quantizer(y, produce_targets=False)
@@ -609,7 +612,7 @@ class Wav2Vec2Model(BaseFairseqModel):
         x = self.compute_preds(x, y, negs)
 
         result = {
-            "x": x, "padding_mask": padding_mask, "features_pen": features_pen,
+            "x": x, "padding_mask": padding_mask, "features_pen": features_pen,"activations": transformer_activations
         }
 
         if prob_ppl is not None:
@@ -627,9 +630,9 @@ class Wav2Vec2Model(BaseFairseqModel):
         x = self.layer_norm(x)
         return self.quantizer.forward_idx(x)
 
-    def extract_features(self, source, padding_mask, mask=False):
+    def extract_features(self, source, padding_mask, mask=False, get_transformer_intermediate_layers=True):
         res = self.forward(source, padding_mask, mask=mask, features_only=True)
-        return res["x"], res["padding_mask"]
+        return res['activations']
 
     def get_logits(self, net_output):
         logits = net_output["x"]
@@ -788,12 +791,12 @@ class TransformerEncoder(nn.Module):
         self.apply(init_bert_params)
 
     def forward(self, x, padding_mask=None):
-        x = self.extract_features(x, padding_mask)
+        x, layer_results = self.extract_features(x, padding_mask)
 
         if self.layer_norm_first:
             x = self.layer_norm(x)
 
-        return x
+        return x, layer_results
 
     def extract_features(self, x, padding_mask=None):
 
@@ -822,7 +825,7 @@ class TransformerEncoder(nn.Module):
         # T x B x C -> B x T x C
         x = x.transpose(0, 1)
 
-        return x
+        return x, layer_results
 
     def max_positions(self):
         """Maximum output length supported by the encoder."""

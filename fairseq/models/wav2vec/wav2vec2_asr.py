@@ -190,6 +190,9 @@ class Wav2VecCtc(BaseFairseqModel):
         x = self.w2v_encoder(**kwargs)
         return x
 
+    def extract_features(self, source, padding_mask, mask=False, get_transformer_intermediate_layers=True):
+        res = self.w2v_encoder.forward(source,padding_mask,mask=mask)
+        return res['activations']
 
 @dataclass
 class Wav2Vec2Seq2SeqConfig(Wav2Vec2AsrConfig):
@@ -369,7 +372,8 @@ class Wav2VecEncoder(FairseqEncoder):
         ft = self.freeze_finetune_updates <= self.num_updates
 
         with torch.no_grad() if not ft else contextlib.ExitStack():
-            x, padding_mask = self.w2v_model.extract_features(**w2v_args)
+            activations = self.w2v_model.extract_features(**w2v_args)
+            x = activations[-1]
 
             if tbc:
                 # B x T x C -> T x B x C
@@ -384,6 +388,8 @@ class Wav2VecEncoder(FairseqEncoder):
             "encoder_out": x,  # T x B x C
             "encoder_padding_mask": padding_mask.transpose(0, 1),  # T x B
             "padding_mask": padding_mask,
+            "features": encoder_features,
+            "activations": activations
         }
 
     def reorder_encoder_out(self, encoder_out, new_order):
